@@ -11,7 +11,7 @@
     
     1. Lambda function needs REQUESTS package as a layer. Load [python.zip](python.zip) into one existing S3 Bucket.
 
-    2. Run [Cloudformation.yaml](CloudFormation.yaml) to set up all AWS configrations.
+    2. Run [Cloudformation.yaml](Cloudformation.yaml) to set up all AWS configrations.
 
     3. Give Cloudformation Template Parameters:
         
