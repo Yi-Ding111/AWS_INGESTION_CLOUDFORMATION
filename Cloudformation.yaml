@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'set up lambda and eventbridge config'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Labels:
+          Default: 'lambda config'
+        Parameters:
+          - LambdaFunctionName
+          - LambdaRole
+          - LayerVersionBucket
+      - Labels:
+          Default: 'eventbridge config'
+        Parameters:
+          - EventBridgeSchedule
+      - Labels:
+          Default: 's3 bucket config'
+        Parameters:
+          - S3BucketName
+    ParameterLabels:
+      LambdaFunctionName:
+        Default: Weather data ingestion lambda function name
+      LambdaRole:
+        Default: IAM Role for lambda
+      LayerVersionBucket:
+        Default: Bucket where store lambda layer zip
+      EventBridgeSchedule:
+        Default: Event trigger on schedule
+      S3BucketName:
+        Default: S3 bucket for weather data
+
+
+Parameters:
+  LambdaFunctionName:
+    Description: Ingest weather data through API
+    Type: String
+    Default: weather_ingest_daily_yiding
+  LambdaRole:
+    Description: Lambda permission
+    Type: String
+    Default: Lambda_s3_weather_role
+  LayerVersionBucket:
+    Description: S3 Bucket name where store lambda function layer zip
+    Type: String
+  EventBridgeSchedule:
+    Description: Trigger lambda function on schedule
+    Type: String
+    Default: weather_lambda_rule
+  S3BucketName:
+    Description: 'give bucket name'
+    Type: String
+    Default: weather-ingest-yiding
+
+
+Resources:
+  #set up s3 bucket
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      AccessControl: Private
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: TRUE
+        BlockPublicPolicy: TRUE
+        IgnorePublicAcls: TRUE
+        RestrictPublicBuckets: TRUE
+      LifecycleConfiguration:
+        Rules:
+          - Id: GlacierRule
+            Prefix: glacier
+            Status: Enabled
+            ExpirationInDays: 365
+            Transitions:
+              - TransitionInDays: 1
+                StorageClass: GLACIER
+
+  #setup IAM role for lambda function
+  LambdaIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref LambdaRole
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: LambdaS3LoadPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 's3:*'
+                Resource: '*'
+
+  #set up lambda function
+  lambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Lambda function for ingesting weather daily data
+      FunctionName: !Ref LambdaFunctionName
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt
+        - LambdaIamRole
+        - Arn
+      Architectures:
+        - x86_64
+      Runtime: python3.8 
+      Timeout: 10
+      Layers:
+        - !Ref LambdaLayer
+      Code:
+        ZipFile: |
+          import requests 
+          import boto3
+          import json
+
+          s3=boto3.client('s3')
+
+          #weatherstack API
+          api_key='5aa684621a44fa49f066ff57b930b3eb'
+          endpoint = 'http://api.weatherstack.com/current'
+
+          params = {
+                  'access_key': api_key,
+                  'query': 'Sydney'
+                  }
+
+          def lambda_handler(event, context):
+              #get today's weather info
+              api_result = requests.get(endpoint, params)
+              api_response = api_result.json()
+
+              #reconstruct data
+              payload={
+                  'city':api_response["location"]["name"],
+                  'country':api_response["location"]["country"],
+                  'ingest_time':api_response["location"]["localtime"],
+                  'observation_time':api_response["current"]["observation_time"],
+                  'temperature':api_response["current"]["temperature"],
+                  'weather_descriptions':api_response["current"]["weather_descriptions"],
+                  'wind_speed':api_response["current"]["wind_speed"],
+                  'wind_degree':api_response["current"]["wind_degree"],
+                  'wind_dir':api_response["current"]["wind_dir"],
+                  'cloudcover':api_response["current"]["cloudcover"]
+              }
+              
+              #load data into s3 bucket
+              data=json.dumps(payload)
+              filename=api_response["location"]["localtime"]+".json"
+              
+              s3.put_object(Bucket="<! DESTINATION_BUCKET_NANE >",Key=filename,Body=data)
+              
+              #res = result.get('ResponseMetadata')['HTTPStatusCode']
+    DependsOn: 
+      - LambdaLayer
+      - LambdaIamRole
+
+  #add requests package layer
+  LambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - python3.6
+        - python3.7
+        - python3.8
+      Content:
+        S3Bucket: !Ref LayerVersionBucket
+        S3Key: python.zip
+      Description: weather data ingestion lambda function layer
+      LayerName: python_requests_package
+      LicenseInfo: MIT
+
+  #setup eventbridge rule
+  scheduledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: trigger the lambda on schedule
+      ScheduleExpression: "rate(12 hours)"
+      State:  "ENABLED"
+      Targets:
+      - Arn: !GetAtt
+          - lambdaFunction
+          - Arn
+        Id: WeatherRule
+    DependsOn: lambdaFunction
+
+
+  
+
