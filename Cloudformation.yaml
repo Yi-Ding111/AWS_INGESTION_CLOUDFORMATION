@@ -71,11 +71,10 @@ Resources:
       LifecycleConfiguration:
         Rules:
           - Id: GlacierRule
-            Prefix: glacier
             Status: Enabled
             ExpirationInDays: 365
             Transitions:
-              - TransitionInDays: 1
+              - TransitionInDays: 100
                 StorageClass: GLACIER
 
   #setup IAM role for lambda function
