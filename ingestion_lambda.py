@@ -5,7 +5,7 @@ import json
 s3=boto3.client('s3')
 
 #weatherstack API
-api_key='5aa684621a44fa49f066ff57b930b3eb'
+api_key=''
 endpoint = 'http://api.weatherstack.com/current'
 
 params = {
